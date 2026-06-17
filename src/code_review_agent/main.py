@@ -106,10 +106,11 @@ def _register_routes(app: FastAPI) -> None:
         app: The FastAPI application instance.
     """
     from code_review_agent.api.health import router as health_router
+    from code_review_agent.api.webhooks import router as webhook_router
 
     app.include_router(health_router)
+    app.include_router(webhook_router)
 
-    # TODO: Register webhook router
     # TODO: Register review API router
 
 
