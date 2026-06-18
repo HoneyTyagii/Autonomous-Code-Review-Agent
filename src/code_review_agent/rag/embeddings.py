@@ -1,7 +1,7 @@
-"""Embedding service abstraction for text vectorization.
+"""Embedding generation service supporting multiple providers.
 
-Supports OpenAI embeddings and local Sentence Transformers models,
-with batching and caching for efficient large-scale indexing.
+Abstracts embedding generation behind a unified interface,
+supporting OpenAI embeddings and local Sentence Transformers.
 """
 
 from abc import ABC, abstractmethod
@@ -14,55 +14,48 @@ from code_review_agent.logging import get_logger
 logger = get_logger("embeddings")
 
 
-class BaseEmbedding(ABC):
+class BaseEmbedder(ABC):
     """Abstract base class for embedding providers."""
 
     @abstractmethod
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_text(self, text: str) -> list[float]:
+        """Generate an embedding vector for a single text.
+
+        Args:
+            text: The text to embed.
+
+        Returns:
+            Embedding vector as a list of floats.
+        """
+
+    @abstractmethod
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a batch of texts.
 
         Args:
-            texts: List of text strings to embed.
+            texts: List of texts to embed.
 
         Returns:
-            List of embedding vectors (one per input text).
+            List of embedding vectors.
         """
-        ...
-
-    @abstractmethod
-    async def embed_query(self, text: str) -> list[float]:
-        """Generate an embedding for a single query text.
-
-        Args:
-            text: The query text to embed.
-
-        Returns:
-            The embedding vector.
-        """
-        ...
 
     @property
     @abstractmethod
     def dimension(self) -> int:
-        """The dimensionality of embeddings produced by this provider."""
-        ...
+        """The dimensionality of the embedding vectors."""
 
 
-class OpenAIEmbedding(BaseEmbedding):
-    """OpenAI text embedding provider.
+class OpenAIEmbedder(BaseEmbedder):
+    """OpenAI API embedding provider.
 
-    Uses the OpenAI API to generate text embeddings. Handles batching
-    to stay within API rate limits.
+    Uses OpenAI's text-embedding models for high-quality embeddings.
 
     Attributes:
+        client: The async OpenAI client.
         model: The embedding model name.
-        client: The OpenAI async client.
     """
 
-    # Batch size limit for OpenAI API
-    MAX_BATCH_SIZE = 2048
-
-    # Known model dimensions
+    # Known dimensions for OpenAI models
     MODEL_DIMENSIONS = {
         "text-embedding-3-small": 1536,
         "text-embedding-3-large": 3072,
@@ -70,184 +63,181 @@ class OpenAIEmbedding(BaseEmbedding):
     }
 
     def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
-        """Initialize the OpenAI embedding provider.
+        """Initialize the OpenAI embedder.
 
         Args:
             api_key: OpenAI API key.
-            model: The embedding model to use.
+            model: Embedding model name.
         """
-        self.model = model
         self.client = openai.AsyncOpenAI(api_key=api_key)
+        self.model = model
         self._dimension = self.MODEL_DIMENSIONS.get(model, 1536)
-        logger.info("openai embedding initialized", model=model)
 
     @property
     def dimension(self) -> int:
         """Embedding vector dimensionality."""
         return self._dimension
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a batch of texts using OpenAI.
-
-        Automatically splits into sub-batches if the input exceeds
-        the maximum batch size.
+    async def embed_text(self, text: str) -> list[float]:
+        """Generate embedding for a single text using OpenAI.
 
         Args:
-            texts: List of text strings to embed.
+            text: The text to embed.
 
         Returns:
-            List of embedding vectors.
+            Embedding vector.
         """
-        if not texts:
-            return []
+        response = await self.client.embeddings.create(
+            input=[text],
+            model=self.model,
+        )
+        return response.data[0].embedding
 
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for a batch of texts using OpenAI.
+
+        Handles chunking for large batches (OpenAI limit: 2048 inputs).
+
+        Args:
+            texts: List of texts to embed.
+
+        Returns:
+            List of embedding vectors in same order as input.
+        """
         all_embeddings: list[list[float]] = []
+        batch_size = 2000  # Stay under OpenAI's 2048 limit
 
-        # Process in batches
-        for i in range(0, len(texts), self.MAX_BATCH_SIZE):
-            batch = texts[i : i + self.MAX_BATCH_SIZE]
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
             response = await self.client.embeddings.create(
-                model=self.model,
                 input=batch,
+                model=self.model,
             )
             batch_embeddings = [item.embedding for item in response.data]
             all_embeddings.extend(batch_embeddings)
 
-        logger.debug("texts embedded", count=len(texts))
         return all_embeddings
 
-    async def embed_query(self, text: str) -> list[float]:
-        """Generate an embedding for a single query.
 
-        Args:
-            text: The query text.
+class SentenceTransformerEmbedder(BaseEmbedder):
+    """Local Sentence Transformer embedding provider.
 
-        Returns:
-            The embedding vector.
-        """
-        response = await self.client.embeddings.create(
-            model=self.model,
-            input=[text],
-        )
-        return response.data[0].embedding
-
-
-class SentenceTransformerEmbedding(BaseEmbedding):
-    """Local embedding provider using Sentence Transformers.
-
-    Runs embedding inference locally without external API calls.
-    Suitable for offline use or when cost is a concern.
+    Runs embedding models locally without API calls, suitable for
+    offline/private deployments.
 
     Attributes:
-        model_name: The HuggingFace model name.
+        model: The loaded SentenceTransformer model.
     """
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
-        """Initialize with a Sentence Transformers model.
+        """Initialize with a local model.
 
         Args:
-            model_name: The model to load from HuggingFace.
+            model_name: HuggingFace model identifier.
         """
-        from sentence_transformers import SentenceTransformer
-
-        self.model_name = model_name
-        self._model = SentenceTransformer(model_name)
-        self._dimension = self._model.get_sentence_embedding_dimension()
-        logger.info("sentence transformer initialized", model=model_name)
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(model_name)
+            self._dimension = self.model.get_sentence_embedding_dimension()
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is required for local embeddings. "
+                "Install with: pip install sentence-transformers"
+            )
 
     @property
     def dimension(self) -> int:
         """Embedding vector dimensionality."""
         return self._dimension
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings locally using Sentence Transformers.
+    async def embed_text(self, text: str) -> list[float]:
+        """Generate embedding locally.
 
         Args:
-            texts: List of text strings to embed.
+            text: The text to embed.
+
+        Returns:
+            Embedding vector.
+        """
+        embedding = self.model.encode(text, convert_to_numpy=True)
+        return embedding.tolist()
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate batch embeddings locally.
+
+        Args:
+            texts: List of texts to embed.
 
         Returns:
             List of embedding vectors.
         """
-        if not texts:
-            return []
-
-        embeddings = self._model.encode(texts, show_progress_bar=False)
+        embeddings = self.model.encode(texts, convert_to_numpy=True)
         return embeddings.tolist()
-
-    async def embed_query(self, text: str) -> list[float]:
-        """Generate an embedding for a single query.
-
-        Args:
-            text: The query text.
-
-        Returns:
-            The embedding vector.
-        """
-        embedding = self._model.encode([text], show_progress_bar=False)
-        return embedding[0].tolist()
 
 
 class EmbeddingService:
-    """Factory and facade for embedding providers.
+    """Unified embedding service with provider abstraction.
 
-    Creates the appropriate embedding provider based on application
-    settings and provides a unified interface.
+    Factory that creates the appropriate embedder based on configuration.
+
+    Attributes:
+        embedder: The active embedding provider instance.
     """
 
-    def __init__(self, provider: BaseEmbedding | None = None) -> None:
+    def __init__(self, embedder: BaseEmbedder | None = None) -> None:
         """Initialize the embedding service.
 
         Args:
-            provider: An explicit provider, or None to auto-configure from settings.
+            embedder: Optional pre-configured embedder. If None, creates
+                     one from application settings.
         """
-        if provider:
-            self._provider = provider
+        if embedder:
+            self.embedder = embedder
         else:
-            self._provider = self._create_from_settings()
+            self.embedder = self._create_from_settings()
 
     @staticmethod
-    def _create_from_settings() -> BaseEmbedding:
-        """Create an embedding provider from application settings.
+    def _create_from_settings() -> BaseEmbedder:
+        """Create an embedder from application settings.
 
         Returns:
-            The configured embedding provider.
+            Configured embedder instance.
         """
         settings = get_settings()
 
         if settings.embedding_provider == EmbeddingProvider.OPENAI:
-            return OpenAIEmbedding(
+            return OpenAIEmbedder(
                 api_key=settings.openai_api_key,
                 model=settings.embedding_model,
             )
+        elif settings.embedding_provider == EmbeddingProvider.SENTENCE_TRANSFORMERS:
+            return SentenceTransformerEmbedder(model_name=settings.embedding_model)
         else:
-            return SentenceTransformerEmbedding(
-                model_name=settings.embedding_model,
-            )
+            raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")
 
     @property
     def dimension(self) -> int:
-        """Embedding dimensionality."""
-        return self._provider.dimension
+        """Get the embedding dimensionality."""
+        return self.embedder.dimension
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, text: str) -> list[float]:
+        """Generate a single embedding.
+
+        Args:
+            text: Text to embed.
+
+        Returns:
+            Embedding vector.
+        """
+        return await self.embedder.embed_text(text)
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:
-            texts: The texts to embed.
+            texts: Texts to embed.
 
         Returns:
             List of embedding vectors.
         """
-        return await self._provider.embed_texts(texts)
-
-    async def embed_query(self, text: str) -> list[float]:
-        """Generate an embedding for a query.
-
-        Args:
-            text: The query text.
-
-        Returns:
-            The embedding vector.
-        """
-        return await self._provider.embed_query(text)
+        return await self.embedder.embed_batch(texts)
