@@ -1,0 +1,47 @@
+# ==============================================================================
+# Development overrides for Docker Compose
+# Usage: docker compose -f docker-compose.yml -f docker/docker-compose.dev.yml up
+# ==============================================================================
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "uvicorn", "code_review_agent.main:app",
+              "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ../src:/app/src
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=DEBUG
+      - DATABASE_ECHO=true
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: ["python", "-m", "celery", "-A", "code_review_agent.tasks.celery_app",
+              "worker", "--loglevel=debug", "--concurrency=2",
+              "-Q", "reviews,indexing", "--pool=solo"]
+    volumes:
+      - ../src:/app/src
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=DEBUG
+
+  # --- Celery Flower (task monitoring) ---
+  flower:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "celery", "-A", "code_review_agent.tasks.celery_app",
+              "flower", "--port=5555"]
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+    depends_on:
+      - redis
+    networks:
+      - app-network

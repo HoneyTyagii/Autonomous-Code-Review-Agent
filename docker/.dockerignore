@@ -1,0 +1,22 @@
+# Ignore in Docker build context
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.env.local
+.idea
+.vscode
+*.egg-info
+dist
+build
+htmlcov
+.coverage
+.pytest_cache
+data/
+logs/
+node_modules
+.DS_Store
+Thumbs.db
+docker-compose.override.yml

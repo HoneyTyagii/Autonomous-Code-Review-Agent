@@ -1,0 +1,42 @@
+# ==============================================================================
+# Celery Worker Dockerfile
+# Runs background review tasks with Docker-in-Docker access
+# ==============================================================================
+
+FROM python:3.11-slim
+
+# Security: create app user (needs Docker socket access)
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
+
+WORKDIR /app
+
+# Install runtime dependencies + Docker CLI (for sandbox execution)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+# Install the package
+RUN pip install --no-cache-dir .
+
+# Copy migrations (workers may run migrations on startup)
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
+
+# Create data directories
+RUN mkdir -p /app/data /app/logs && chown -R appuser:appuser /app
+
+# Add appuser to docker group for sandbox access
+RUN usermod -aG docker appuser
+
+USER appuser
+
+# Default command: run Celery worker
+CMD ["python", "-m", "celery", "-A", "code_review_agent.tasks.celery_app", \
+     "worker", "--loglevel=info", "--concurrency=4", \
+     "-Q", "reviews,indexing"]
