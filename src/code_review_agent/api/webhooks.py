@@ -134,13 +134,14 @@ async def _handle_pull_request_event(payload: dict[str, Any]) -> dict[str, str]:
             "reason": f"action '{action}' does not trigger review",
         }
 
-    # TODO: Dispatch to Celery task for async review processing
-    # from code_review_agent.tasks import review_pull_request
-    # review_pull_request.delay(
-    #     repo_full_name=repo_full_name,
-    #     pr_number=pr_number,
-    #     installation_id=payload.get("installation", {}).get("id"),
-    # )
+    # Dispatch to Celery task for async review processing
+    from code_review_agent.tasks import review_pull_request
+
+    review_pull_request.delay(
+        repo_full_name=repo_full_name,
+        pr_number=pr_number,
+        installation_id=payload.get("installation", {}).get("id"),
+    )
 
     logger.info(
         "review queued",
