@@ -215,7 +215,7 @@ class GitHubClient:
         logger.info(
             "review created",
             pr_number=pr_number,
-            event=event,
+            review_event=event,
             comment_count=len(comments) if comments else 0,
         )
         return response.json()

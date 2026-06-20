@@ -284,7 +284,7 @@ async def _post_review_to_github(
         )
         logger.info(
             "review posted",
-            event=event,
+            review_event=event,
             inline_comments=len(inline_comments),
         )
     except Exception as e:

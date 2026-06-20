@@ -81,7 +81,7 @@ async def github_webhook(
 
     logger.info(
         "webhook received",
-        event=x_github_event,
+        github_event=x_github_event,
         delivery_id=x_github_delivery,
     )
 
@@ -94,7 +94,7 @@ async def github_webhook(
         elif x_github_event == "ping":
             return _handle_ping_event(payload)
         else:
-            logger.debug("ignoring unhandled event type", event=x_github_event)
+            logger.debug("ignoring unhandled event type", github_event=x_github_event)
             return {"status": "ignored", "reason": f"unhandled event: {x_github_event}"}
     finally:
         clear_context()
