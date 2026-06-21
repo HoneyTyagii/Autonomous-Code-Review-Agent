@@ -143,3 +143,17 @@ class BaseLLM(ABC):
     def model_name(self) -> str:
         """Return the configured model name."""
         return self.config.model
+
+    @abstractmethod
+    async def health_check(self) -> dict[str, Any]:
+        """Verify provider connectivity and return status metadata.
+
+        Implementations should perform a lightweight, non-mutating API call
+        (for example, listing available models) and measure latency. On
+        failure an exception is raised so callers can mark the service as
+        unhealthy.
+
+        Returns:
+            Dictionary containing at least ``status``, ``provider``,
+            ``model``, and ``latency_ms`` keys.
+        """

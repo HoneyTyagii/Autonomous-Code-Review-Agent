@@ -5,6 +5,7 @@ structured output support, and usage tracking.
 """
 
 import json
+import time
 from typing import Any
 
 import anthropic
@@ -55,6 +56,28 @@ class AnthropicProvider(BaseLLM):
     def provider_name(self) -> str:
         """Provider identifier."""
         return "anthropic"
+
+    async def health_check(self) -> dict[str, Any]:
+        """Verify connectivity to the Anthropic API.
+
+        Performs a lightweight call to list models and measures latency.
+
+        Returns:
+            Status metadata with provider, model, and latency_ms.
+
+        Raises:
+            anthropic.APIError: If the API call fails.
+        """
+        start = time.perf_counter()
+        await self.client.models.list(limit=1)
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+
+        return {
+            "status": "healthy",
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "latency_ms": latency_ms,
+        }
 
     def _prepare_messages(
         self, messages: list[Message]

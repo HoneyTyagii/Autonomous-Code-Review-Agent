@@ -10,6 +10,8 @@ from typing import Any
 from fastapi import APIRouter, Response, status
 
 from code_review_agent import __version__
+from code_review_agent.config import get_settings
+from code_review_agent.llm.factory import create_llm_provider
 
 router = APIRouter(tags=["health"])
 
@@ -46,6 +48,7 @@ async def readiness_check() -> dict[str, Any] | Response:
     - Database (PostgreSQL)
     - Redis
     - Vector store (ChromaDB)
+    - Configured LLM provider
 
     Returns:
         Detailed status of each dependency, or 503 if any are unavailable.
@@ -75,6 +78,15 @@ async def readiness_check() -> dict[str, Any] | Response:
         checks["vector_store"] = {"status": "healthy", "latency_ms": 0}
     except Exception as e:
         checks["vector_store"] = {"status": "unhealthy", "error": str(e)}
+        all_healthy = False
+
+    # LLM provider check
+    try:
+        settings = get_settings()
+        provider = create_llm_provider()
+        checks["llm"] = await provider.health_check()
+    except Exception as e:
+        checks["llm"] = {"status": "unhealthy", "error": str(e)}
         all_healthy = False
 
     result = {
